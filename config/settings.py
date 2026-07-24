@@ -16,7 +16,7 @@ FIELD_ENCRYPTION_KEY = config('FIELD_ENCRYPTION_KEY', default='')
 
 DEBUG = config('DEBUG', default=False, cast=bool)
 
-ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='localhost,127.0.0.1', cast=lambda v: [s.strip() for s in v.split(',')])
+ALLOWED_HOSTS = ALLOWED_HOSTS = ['127.0.0.1:30000','localhost','127.0.0.1','django.dprtaxworkflow.com']
 
 # Automatically allow the Render-assigned hostname
 RENDER_EXTERNAL_HOSTNAME = os.environ.get('RENDER_EXTERNAL_HOSTNAME')
@@ -189,3 +189,5 @@ ALLOWED_DOCUMENT_TYPES = ['application/pdf', 'image/jpeg', 'image/png', 'image/j
 
 # Archive path
 ARCHIVE_ROOT = BASE_DIR / 'media' / 'archives'
+
+
