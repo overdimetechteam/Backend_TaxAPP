@@ -12,6 +12,7 @@ Filtering/ordering on encrypted fields is not supported — use FK or non-sensit
 fields (status, created_at, etc.) for queries instead.
 """
 import logging
+from typing import Optional
 
 from cryptography.fernet import Fernet, InvalidToken
 from django.db import models
@@ -20,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 # Ephemeral fallback key used only when FIELD_ENCRYPTION_KEY is not configured.
 # Data encrypted with this key is lost on process restart — development only.
-_ephemeral_key: str | None = None
+_ephemeral_key: Optional[str] = None
 
 
 def _fernet() -> Fernet:
@@ -48,7 +49,7 @@ def encrypt_value(plaintext: str) -> str:
     return _fernet().encrypt(str(plaintext).encode()).decode()
 
 
-def decrypt_value(ciphertext: str) -> str | None:
+def decrypt_value(ciphertext: str) -> Optional[str]:
     """
     Return decrypted plaintext.
     If decryption fails (plaintext legacy data before migration), returns value as-is.
