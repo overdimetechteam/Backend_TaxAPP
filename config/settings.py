@@ -16,14 +16,14 @@ FIELD_ENCRYPTION_KEY = config('FIELD_ENCRYPTION_KEY', default='')
 
 DEBUG = config('DEBUG', default=False, cast=bool)
 
-ALLOWED_HOSTS = ALLOWED_HOSTS = ['127.0.0.1:30000','localhost','127.0.0.1','django.dprtaxworkflow.com']
+ALLOWED_HOSTS = ALLOWED_HOSTS = ['127.0.0.1:30001','localhost','127.0.0.1','django.dprtaxworkflow.com']
 
 # Automatically allow the Render-assigned hostname
 RENDER_EXTERNAL_HOSTNAME = os.environ.get('RENDER_EXTERNAL_HOSTNAME')
 if RENDER_EXTERNAL_HOSTNAME:
     ALLOWED_HOSTS.append(RENDER_EXTERNAL_HOSTNAME)
 
-INSTALLED_APPS = [
+INSTALLED_APPS = [  
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -78,17 +78,16 @@ WSGI_APPLICATION = 'config.wsgi.application'
 
 DATABASE_URL = config('DATABASE_URL', default=None)
 
-if DATABASE_URL:
-    DATABASES = {
-        'default': dj_database_url.parse(DATABASE_URL, conn_max_age=600)
+DATABASES = {
+    "default": {
+        "ENGINE": "django.db.backends.mysql",
+        "NAME": "dprit_tax_application",
+        "USER": "dprit_admin",
+        "PASSWORD": "CkE##s4Ecp",
+        "HOST": "localhost",
+        "PORT": "3306",
     }
-else:
-    DATABASES = {
-        'default': {
-            'ENGINE': 'django.db.backends.sqlite3',
-            'NAME': BASE_DIR / 'db.sqlite3',
-        }
-    }
+}
 
 AUTH_USER_MODEL = 'authentication.CustomUser'
 
