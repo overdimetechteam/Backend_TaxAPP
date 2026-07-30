@@ -12,8 +12,11 @@ from apps.tax_forms.models import TaxYear
 from apps.authentication.models import CustomUser
 
 # ── Tax Year 2025/2026 ────────────────────────────────────────────────────────
+# `year` follows the convention used by migration 0006_seed_previous_tax_years
+# (and every `tax_year__year` filter in the app): it's the start year of the
+# assessment period, so Y/A 2025/2026 (Apr 2025 - Mar 2026) is year=2025.
 tax_year, created = TaxYear.objects.get_or_create(
-    year=2026,
+    year=2025,
     defaults={
         'label': 'Y/A 2025/2026',
         'assessment_year_start': date(2025, 4, 1),
@@ -24,84 +27,27 @@ tax_year, created = TaxYear.objects.get_or_create(
 )
 print(f"{'Created' if created else 'Exists'} Tax Year: {tax_year.label}")
 
-# ── Consultants ───────────────────────────────────────────────────────────────
-CONSULTANTS = [
-    {
-        'email': 'consultant@taxportal.lk',
-        'username': 'consultant',
-        'first_name': 'Tax',
-        'last_name': 'Consultant',
-        'password': 'Admin@12345',
-    },
-    {
-        'email': 'ashan@taxportal.lk',
-        'username': 'ashan',
-        'first_name': 'Ashan',
-        'last_name': 'Perera',
-        'password': 'Admin@12345',
-    },
-    {
-        'email': 'nimal@taxportal.lk',
-        'username': 'nimal',
-        'first_name': 'Nimal',
-        'last_name': 'Silva',
-        'password': 'Admin@12345',
-    },
-    {
-        'email': 'kumari@taxportal.lk',
-        'username': 'kumari',
-        'first_name': 'Kumari',
-        'last_name': 'Fernando',
-        'password': 'Admin@12345',
-    },
-]
-
-for c in CONSULTANTS:
-    if not CustomUser.objects.filter(email=c['email']).exists():
-        user = CustomUser.objects.create_user(
-            email=c['email'],
-            username=c['username'],
-            first_name=c['first_name'],
-            last_name=c['last_name'],
-            password=c['password'],
-            role='consultant',
-        )
-        print(f"Created consultant: {user.email} / {c['password']}")
-    else:
-        print(f"Exists: {c['email']}")
-
-# ── Accounts Division ─────────────────────────────────────────────────────────
-ACCOUNTS_USERS = [
-    {
-        'email': 'accounts@taxportal.lk',
-        'username': 'accounts',
-        'first_name': 'Accounts',
-        'last_name': 'Officer',
-        'password': 'Admin@12345',
-    },
-]
-
-for a in ACCOUNTS_USERS:
-    if not CustomUser.objects.filter(email=a['email']).exists():
-        user = CustomUser.objects.create_user(
-            email=a['email'],
-            username=a['username'],
-            first_name=a['first_name'],
-            last_name=a['last_name'],
-            password=a['password'],
-            role='accounts_division',
-        )
-        print(f"Created accounts officer: {user.email} / {a['password']}")
-    else:
-        print(f"Exists: {a['email']}")
-
 # ── Super Admin ───────────────────────────────────────────────────────────────
 SUPER_ADMINS = [
     {
-        'email': 'superadmin@taxportal.lk',
-        'username': 'superadmin',
-        'first_name': 'Super',
-        'last_name': 'Admin',
+        'email': 'bharatha@dpr.lk',
+        'username': 'bharatha',
+        'first_name': 'Bharatha',
+        'last_name': 'Subasinghe',
+        'password': 'Admin@12345',
+    },
+    {
+        'email': 'madusanka@dpr.lk',
+        'username': 'madusanka',
+        'first_name': 'Madusanka',
+        'last_name': 'Hewage',
+        'password': 'Admin@12345',
+    },
+    {
+        'email': 'manager.tax@dpr.lk',
+        'username': 'manager.tax',
+        'first_name': 'Tax',
+        'last_name': 'Manager',
         'password': 'Admin@12345',
     },
 ]

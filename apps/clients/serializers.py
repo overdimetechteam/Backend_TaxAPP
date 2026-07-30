@@ -12,12 +12,13 @@ class ClientProfileSerializer(serializers.ModelSerializer):
     username = serializers.CharField(source='user.username', read_only=True)
     user_id = serializers.IntegerField(source='user.id', read_only=True)
     consultant_name = serializers.SerializerMethodField()
+    is_active = serializers.BooleanField(source='user.is_active')
 
     class Meta:
         model = ClientProfile
         fields = [
             'id', 'user_id', 'email', 'username', 'full_name', 'tin', 'pin', 'nic_passport',
-            'telephone', 'mobile', 'address', 'status', 'notes',
+            'telephone', 'mobile', 'address', 'status', 'is_active', 'notes',
             'assigned_consultant', 'consultant_name', 'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
@@ -26,6 +27,14 @@ class ClientProfileSerializer(serializers.ModelSerializer):
         if obj.assigned_consultant:
             return obj.assigned_consultant.get_full_name() or obj.assigned_consultant.email
         return None
+
+    def update(self, instance, validated_data):
+        user_data = validated_data.pop('user', None)
+        instance = super().update(instance, validated_data)
+        if user_data and 'is_active' in user_data:
+            instance.user.is_active = user_data['is_active']
+            instance.user.save(update_fields=['is_active'])
+        return instance
 
 
 class RegisterClientSerializer(serializers.Serializer):
@@ -131,13 +140,14 @@ class RegisterClientSerializer(serializers.Serializer):
 
 class ClientListSerializer(serializers.ModelSerializer):
     email = serializers.EmailField(source='user.email', read_only=True)
+    is_active = serializers.BooleanField(source='user.is_active', read_only=True)
     current_submission_status = serializers.SerializerMethodField()
     consultant_name = serializers.SerializerMethodField()
     consultant_id = serializers.IntegerField(source='assigned_consultant.id', read_only=True)
 
     class Meta:
         model = ClientProfile
-        fields = ['id', 'email', 'full_name', 'tin', 'status', 'current_submission_status',
+        fields = ['id', 'email', 'full_name', 'tin', 'status', 'is_active', 'current_submission_status',
                   'created_at', 'consultant_name', 'consultant_id']
 
     def get_current_submission_status(self, obj):

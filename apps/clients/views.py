@@ -76,10 +76,15 @@ class ClientListView(generics.ListAPIView):
             qs = ClientProfile.objects.all().select_related('user', 'assigned_consultant')
             if consultant_id:
                 qs = qs.filter(assigned_consultant_id=consultant_id)
-            return qs
-        return ClientProfile.objects.filter(
-            assigned_consultant=user
-        ).select_related('user')
+        else:
+            qs = ClientProfile.objects.filter(
+                assigned_consultant=user
+            ).select_related('user')
+
+        is_active = self.request.query_params.get('is_active')
+        if is_active is not None and is_active != '':
+            qs = qs.filter(user__is_active=is_active.lower() in ('true', '1'))
+        return qs
 
 
 class ClientDetailView(generics.RetrieveUpdateAPIView):
@@ -97,6 +102,12 @@ class ClientDetailView(generics.RetrieveUpdateAPIView):
 
     def patch(self, request, *args, **kwargs):
         return self.partial_update(request, *args, **kwargs)
+
+    def perform_update(self, serializer):
+        # Only consultants/admins may flip a client's active status.
+        if self.request.user.role not in ADMIN_ROLES:
+            serializer.validated_data.get('user', {}).pop('is_active', None)
+        serializer.save()
 
 
 class ClientCredentialsView(APIView):
@@ -159,11 +170,16 @@ class ClientCredentialsView(APIView):
 
 
 class MyProfileView(generics.RetrieveUpdateAPIView):
+    """Client's own profile edit. Clients may not change their own is_active flag."""
     serializer_class = ClientProfileSerializer
     permission_classes = [IsAuthenticated]
 
     def get_object(self):
         return self.request.user.client_profile
+
+    def perform_update(self, serializer):
+        serializer.validated_data.get('user', {}).pop('is_active', None)
+        serializer.save()
 
 
 class ConsultantDashboardStatsView(APIView):
