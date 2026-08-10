@@ -16,7 +16,10 @@ def _recalculate_for_submission(submission_id):
             'local_employment', 'foreign_income', 'terminal_benefit',
             'rent_income', 'interest_income', 'dividend_income',
             'other_income', 'qualifying_payments', 'tax_credits',
-        ).prefetch_related('sole_proprietorships', 'self_assessment_payments').get(pk=submission_id)
+            'tb_securities',
+        ).prefetch_related(
+            'sole_proprietorships', 'self_assessment_payments', 'wht_certificates',
+        ).get(pk=submission_id)
 
         result = calculate_full_tax(sub)
 
@@ -48,14 +51,14 @@ def connect_signals():
     from .models import (
         LocalEmploymentIncome, ForeignIncome, TerminalBenefit,
         RentIncome, InterestIncome, DividendIncome,
-        SoleProprietorshipIncome, OtherIncome,
+        SoleProprietorshipIncome, OtherIncome, TBSecuritiesIncome,
         QualifyingPayments, TaxCredits,
         SelfAssessmentPayment, WHTCertificate,
     )
     trigger_models = [
         LocalEmploymentIncome, ForeignIncome, TerminalBenefit,
         RentIncome, InterestIncome, DividendIncome,
-        SoleProprietorshipIncome, OtherIncome,
+        SoleProprietorshipIncome, OtherIncome, TBSecuritiesIncome,
         QualifyingPayments, TaxCredits,
         SelfAssessmentPayment, WHTCertificate,
     ]

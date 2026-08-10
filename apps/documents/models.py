@@ -26,6 +26,8 @@ class Document(models.Model):
         # General
         ('supporting_document', 'Supporting Document'),
         ('final_submission', 'Final Tax Submission Document'),
+        ('ird_return', 'IRD Return'),
+        ('ird_acknowledgement', 'IRD Acknowledgement'),
         ('other', 'Other'),
     ]
 

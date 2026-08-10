@@ -607,7 +607,9 @@ def _add_schedule_7(els, st, ri, ii, tc, wht_certs):
     total_int_wht  = int_wht  + cert_int
     total_rent_wht = rent_wht + cert_rent
     total_ait      = total_int_wht + total_rent_wht + cert_svc
-    credit_used    = _D(tc and tc.wht_rent_interest_service)
+    # No prior-year carried-forward balance is tracked, so the full amount deducted
+    # this year is available for set-off (mirrors calculate_full_tax's total_credits).
+    credit_used    = total_ait
 
     hdr = [
         _P('S/N',                   st['tbl_hdr']),
@@ -760,10 +762,13 @@ def _add_schedule_9(els, st, submission, tc):
     _sec(els, st, 'Schedule 9 - Tax credits')
 
     apit          = _D(tc and tc.apit_on_salary)
-    wht_ait       = _D(tc and tc.wht_rent_interest_service)
     partner_tc    = _D(tc and tc.partnership_tax_credit)
     sap_total     = sum(_D(s.amount) for s in submission.self_assessment_payments.all())
     total_credits = _D(submission.total_tax_credits)
+    # Advance income tax / WHT credit = total credits less the other line items below
+    # (rent/interest/business/TB-securities WHT plus WHT certificates), so the printed
+    # rows always sum to the Total Tax Credits figure above.
+    wht_ait       = max(Decimal('0'), total_credits - apit - partner_tc - sap_total)
 
     els.append(_cage_tbl([
         _cr(st, 'APIT on employment income — T10 certificate (Rs.)',  '903A', apit),
@@ -1122,10 +1127,15 @@ def _add_tax_computation_summary(els, st, submission):
     _sec(els, st, f'{next_sec}  Tax Credits')
 
     apit         = _D(tc and tc.apit_on_salary)
-    wht_certs_t  = _D(tc and tc.wht_rent_interest_service)
     partner_tc   = _D(tc and tc.partnership_tax_credit)
     rent_wht     = _D(ri and ri.wht_deducted)
     interest_wht = _D(ii and ii.wht_deducted)
+    sole_wht     = sum(_D(sp.wht_deducted) for sp in sole_props)
+    tbs          = getattr(submission, 'tb_securities', None)
+    tb_wht       = _D(tbs and tbs.wht_deducted)
+    other_certs  = sum(
+        _D(c.amount) for c in submission.wht_certificates.exclude(category__in=('rent', 'interest'))
+    )
     sap_total    = sum(_D(s.amount) for s in submission.self_assessment_payments.all())
     total_credits = _D(submission.total_tax_credits)
 
@@ -1137,7 +1147,9 @@ def _add_tax_computation_summary(els, st, submission):
     _cred('APIT on Salary',                       apit)
     _cred('WHT on Rent Income (deducted at source)', rent_wht)
     _cred('WHT on Interest Income (deducted at source)', interest_wht)
-    _cred('WHT / AIT Credits (certificates)',      wht_certs_t)
+    _cred('WHT on Business Income (deducted at source)', sole_wht)
+    _cred('WHT on T-Bills / Securities (deducted at source)', tb_wht)
+    _cred('WHT Certificates (Service Fees / Employment / Other)', other_certs)
     _cred('Partnership Tax Credit',                partner_tc)
     _cred('Self-Assessment Installments',          sap_total)
     cr_rows.append([_P('Total Tax Credits', SB), _P(f'({_fmt(total_credits)})', SBR)])

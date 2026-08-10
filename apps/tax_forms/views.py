@@ -326,13 +326,8 @@ class RequestInfoView(APIView):
     permission_classes = [IsConsultant]
 
     def post(self, request, pk):
-        client_ids = ClientProfile.objects.filter(
-            assigned_consultant=request.user
-        ).values_list('user_id', flat=True)
-
-        try:
-            submission = TaxSubmission.objects.get(id=pk, client_id__in=client_ids)
-        except TaxSubmission.DoesNotExist:
+        submission = _get_submission_for_user(pk, request.user)
+        if not submission:
             return Response({'error': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
 
         message = request.data.get('message', '')
@@ -1311,13 +1306,8 @@ class FinalSubmitView(APIView):
     permission_classes = [IsConsultant]
 
     def post(self, request, pk):
-        client_ids = ClientProfile.objects.filter(
-            assigned_consultant=request.user
-        ).values_list('user_id', flat=True)
-
-        try:
-            submission = TaxSubmission.objects.get(id=pk, client_id__in=client_ids)
-        except TaxSubmission.DoesNotExist:
+        submission = _get_submission_for_user(pk, request.user)
+        if not submission:
             return Response({'error': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
 
         if submission.status != 'confirmed':
@@ -1394,17 +1384,12 @@ class ClientFinalConfirmView(APIView):
 
 class ArchiveSubmissionView(APIView):
     """Consultant marks a client-confirmed submission as complete and archives documents.
-    Requires a final document to be uploaded (multipart/form-data)."""
+    Requires both the IRD return and the IRD acknowledgement to be uploaded (multipart/form-data)."""
     permission_classes = [IsConsultant]
 
     def post(self, request, pk):
-        client_ids = ClientProfile.objects.filter(
-            assigned_consultant=request.user
-        ).values_list('user_id', flat=True)
-
-        try:
-            submission = TaxSubmission.objects.get(id=pk, client_id__in=client_ids)
-        except TaxSubmission.DoesNotExist:
+        submission = _get_submission_for_user(pk, request.user)
+        if not submission:
             return Response({'error': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
 
         if submission.status != 'client_confirmed':
@@ -1413,27 +1398,38 @@ class ArchiveSubmissionView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        uploaded_file = request.FILES.get('file')
-        if not uploaded_file:
+        ird_return_file = request.FILES.get('ird_return')
+        acknowledgement_file = request.FILES.get('acknowledgement')
+        if not ird_return_file or not acknowledgement_file:
             return Response(
                 {
-                    'error': 'A final document must be uploaded before completing and archiving this submission.',
+                    'error': 'Both the IRD return and the IRD acknowledgement must be uploaded before completing and archiving this submission.',
                     'requires_document': True,
                 },
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Save the uploaded document
+        # Save the uploaded documents
         from apps.documents.models import Document
         Document.objects.create(
             submission=submission,
             uploaded_by=request.user,
-            document_type='final_submission',
+            document_type='ird_return',
             section='general',
-            file=uploaded_file,
-            original_filename=uploaded_file.name,
-            file_size=uploaded_file.size,
-            description=request.data.get('description', 'Final Tax Submission Document'),
+            file=ird_return_file,
+            original_filename=ird_return_file.name,
+            file_size=ird_return_file.size,
+            description=request.data.get('ird_return_description', 'IRD Return'),
+        )
+        Document.objects.create(
+            submission=submission,
+            uploaded_by=request.user,
+            document_type='ird_acknowledgement',
+            section='general',
+            file=acknowledgement_file,
+            original_filename=acknowledgement_file.name,
+            file_size=acknowledgement_file.size,
+            description=request.data.get('acknowledgement_description', 'IRD Acknowledgement'),
         )
 
         _archive_submission(submission)

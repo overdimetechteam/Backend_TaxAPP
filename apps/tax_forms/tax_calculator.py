@@ -237,22 +237,32 @@ def calculate_full_tax(submission) -> dict:
     # ── 5. Tax Credits ───────────────────────────────────────────────────────
 
     apit = Decimal('0.00')
-    wht_certs = Decimal('0.00')
     partnership_credit = Decimal('0.00')
     self_assessment_total = Decimal('0.00')
 
     if hasattr(submission, 'tax_credits'):
         tc = submission.tax_credits
         apit          = tc.apit_on_salary or Decimal('0.00')
-        wht_certs     = tc.wht_rent_interest_service or Decimal('0.00')
         partnership_credit = tc.partnership_tax_credit or Decimal('0.00')
 
     for sap in submission.self_assessment_payments.all():
         self_assessment_total += sap.amount or Decimal('0.00')
 
-    # Tax credits come only from the Tax Credits section (wht_certs is auto-populated
-    # from income section WHT totals — adding income WHT separately would double-count).
-    total_credits = apit + wht_certs + partnership_credit + self_assessment_total
+    # WHT actually withheld at source on rent / interest / sole-proprietorship /
+    # TB-securities income — computed live from the income records themselves so
+    # it always feeds the total, regardless of whether the (separately saved)
+    # Tax Credits form was ever submitted.
+    wht_from_income = rent_wht + interest_wht + sole_prop_wht + tb_securities_wht
+
+    # WHT certificates cover categories not captured by the income-section WHT
+    # fields above (service fees, employment, other). Rent/Interest certificates
+    # are supporting evidence for wht_from_income and are excluded here to avoid
+    # double-counting the same withholding twice.
+    wht_from_certs = Decimal('0.00')
+    for cert in submission.wht_certificates.exclude(category__in=('rent', 'interest')):
+        wht_from_certs += cert.amount or Decimal('0.00')
+
+    total_credits = apit + wht_from_income + wht_from_certs + partnership_credit + self_assessment_total
 
     # ── 6. Foreign income tax (Schedule 9 cage 901) ─────────────────────────
     # foreign_tax_gross was computed in step 4 (capped at 15% per slab).
@@ -302,7 +312,8 @@ def calculate_full_tax(submission) -> dict:
             'donation_government': donation_govt,
             'solar_panels': solar,
             'apit': apit,
-            'wht_certs': wht_certs,
+            'wht_from_income': wht_from_income,
+            'wht_from_certs': wht_from_certs,
             'partnership_credit': partnership_credit,
             'self_assessment': self_assessment_total,
         }

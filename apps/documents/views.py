@@ -6,29 +6,25 @@ from django.shortcuts import get_object_or_404
 
 from .models import Document
 from .serializers import DocumentSerializer, DocumentUploadSerializer
-from apps.tax_forms.models import TaxSubmission
 from apps.clients.models import ClientProfile
+from apps.tax_forms.views import _get_submission_for_user
 
 
 class DocumentListView(APIView):
     permission_classes = [IsAuthenticated]
 
-    def get_submission(self, submission_id, user):
-        if user.role == 'consultant':
-            client_ids = ClientProfile.objects.filter(
-                assigned_consultant=user
-            ).values_list('user_id', flat=True)
-            return get_object_or_404(TaxSubmission, id=submission_id, client_id__in=client_ids)
-        return get_object_or_404(TaxSubmission, id=submission_id, client=user)
-
     def get(self, request, submission_id):
-        submission = self.get_submission(submission_id, request.user)
+        submission = _get_submission_for_user(submission_id, request.user)
+        if not submission:
+            return Response({'error': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
         documents = Document.objects.filter(submission=submission)
         serializer = DocumentSerializer(documents, many=True, context={'request': request})
         return Response(serializer.data)
 
     def post(self, request, submission_id):
-        submission = self.get_submission(submission_id, request.user)
+        submission = _get_submission_for_user(submission_id, request.user)
+        if not submission:
+            return Response({'error': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
 
         if submission.status not in ['draft', 'info_requested']:
             return Response({'error': 'Cannot upload documents in current status.'}, status=status.HTTP_400_BAD_REQUEST)
@@ -55,15 +51,8 @@ class DocumentDetailView(APIView):
 
     def get_document(self, pk, user):
         doc = get_object_or_404(Document, id=pk)
-        if user.role == 'consultant':
-            client_ids = ClientProfile.objects.filter(
-                assigned_consultant=user
-            ).values_list('user_id', flat=True)
-            if doc.submission.client_id not in client_ids:
-                return None
-        else:
-            if doc.submission.client != user:
-                return None
+        if not _get_submission_for_user(doc.submission_id, user):
+            return None
         return doc
 
     def get(self, request, pk):

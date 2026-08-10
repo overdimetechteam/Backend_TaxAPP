@@ -245,6 +245,7 @@ class ConsultantListView(APIView):
                 'id': c.id,
                 'name': c.get_full_name() or c.email,
                 'email': c.email,
+                'phone': c.phone,
                 'client_count': client_count,
             })
         return Response(data)
@@ -433,6 +434,25 @@ class ConsultantDetailView(APIView):
                 {'id': cp.id, 'full_name': cp.full_name, 'email': cp.user.email, 'status': cp.status}
                 for cp in clients
             ],
+        })
+
+    def patch(self, request, pk):
+        consultant = self._get_consultant(pk)
+        if not consultant:
+            return Response({'error': 'Consultant not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        if 'phone' not in request.data:
+            return Response({'error': 'phone is required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        consultant.phone = request.data.get('phone', '').strip() or None
+        consultant.save(update_fields=['phone'])
+        return Response({
+            'id': consultant.id,
+            'name': consultant.get_full_name() or consultant.email,
+            'email': consultant.email,
+            'username': consultant.username,
+            'phone': consultant.phone,
+            'is_active': consultant.is_active,
         })
 
     def delete(self, request, pk):
