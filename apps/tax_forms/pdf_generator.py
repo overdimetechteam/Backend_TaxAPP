@@ -763,6 +763,7 @@ def _add_schedule_9(els, st, submission, tc):
 
     apit          = _D(tc and tc.apit_on_salary)
     partner_tc    = _D(tc and tc.partnership_tax_credit)
+    foreign_tax_paid = _D(getattr(getattr(submission, 'foreign_income', None), 'foreign_tax_paid', None))
     sap_total     = sum(_D(s.amount) for s in submission.self_assessment_payments.all())
     total_credits = _D(submission.total_tax_credits)
     # Advance income tax / WHT credit = total credits less the other line items below
@@ -772,6 +773,7 @@ def _add_schedule_9(els, st, submission, tc):
 
     els.append(_cage_tbl([
         _cr(st, 'APIT on employment income — T10 certificate (Rs.)',  '903A', apit),
+        _cr(st, 'Foreign tax paid / WHT credit (Cage 901) (Rs.)',      901,  foreign_tax_paid),
         _cr(st, 'Advance income tax credit — Enter amount in Cage 710 of Schedule 7A (Rs.)', 908, wht_ait),
         _cr(st, 'Partnership tax credit (Rs.)',                        909,  partner_tc),
         _cr(st, 'Total installment payments (from Schedule 9B) (Rs.)', 911,  sap_total),
