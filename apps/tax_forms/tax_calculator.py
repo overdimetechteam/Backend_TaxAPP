@@ -213,16 +213,22 @@ def calculate_full_tax(submission) -> dict:
     rent_relief = (rent_gross * RENT_RELIEF_RATE).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
 
     # ── 3. Taxable Income ────────────────────────────────────────────────────
-    # Qualifying payments and rent relief offset local (non-foreign) income only.
-    # The personal relief (tax-free allowance) is applied to local income first;
-    # any unused balance then offsets foreign income.
+    # Rent relief offsets local (non-foreign) income only — it is 25% of gross
+    # rent, a locally-sourced income component, so it never exceeds local income.
+    # Qualifying payments (donations, solar) and the personal relief both offset
+    # local income first; any unused balance from either then spills over to
+    # offset foreign income. Without this spillover, clients whose income is
+    # mostly/entirely foreign employment income (little or no local income to
+    # absorb the deduction) would see qualifying payments like the solar relief
+    # have no effect on their tax at all.
 
     non_foreign_income = total_assessable - foreign
-    local_base = max(Decimal('0.00'), non_foreign_income - total_qualifying - rent_relief)
+    local_after_rent = max(Decimal('0.00'), non_foreign_income - rent_relief)
 
-    local_relief_used = min(personal_relief, local_base)
-    taxable_local = local_base - local_relief_used
-    remaining_relief = personal_relief - local_relief_used
+    local_reliefs = total_qualifying + personal_relief
+    local_relief_used = min(local_reliefs, local_after_rent)
+    taxable_local = local_after_rent - local_relief_used
+    remaining_relief = local_reliefs - local_relief_used
     taxable_foreign = max(Decimal('0.00'), foreign - remaining_relief)
 
     net_taxable = taxable_local + taxable_foreign
