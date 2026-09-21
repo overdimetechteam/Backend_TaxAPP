@@ -283,7 +283,7 @@ class SystemSettingsSerializer(serializers.ModelSerializer):
 # ── Full Submission Serializer ────────────────────────────────────────────────
 
 class TaxSubmissionSerializer(serializers.ModelSerializer):
-    local_employment = LocalEmploymentIncomeSerializer(read_only=True)
+    local_employments = LocalEmploymentIncomeSerializer(many=True, read_only=True)
     foreign_income = ForeignIncomeSerializer(read_only=True)
     terminal_benefit = TerminalBenefitSerializer(read_only=True)
     rent_income = RentIncomeSerializer(read_only=True)

@@ -13,12 +13,13 @@ def _recalculate_for_submission(submission_id):
     try:
         from .models import TaxSubmission
         sub = TaxSubmission.objects.select_related(
-            'local_employment', 'foreign_income', 'terminal_benefit',
+            'foreign_income', 'terminal_benefit',
             'rent_income', 'interest_income', 'dividend_income',
             'other_income', 'qualifying_payments', 'tax_credits',
             'tb_securities',
         ).prefetch_related(
-            'sole_proprietorships', 'self_assessment_payments', 'wht_certificates',
+            'local_employments', 'sole_proprietorships', 'self_assessment_payments', 'wht_certificates',
+            'disposals',
         ).get(pk=submission_id)
 
         result = calculate_full_tax(sub)
@@ -32,6 +33,8 @@ def _recalculate_for_submission(submission_id):
             net_taxable_income=result['net_taxable_income'],
             gross_tax=result['gross_tax'],
             total_tax_credits=result['total_tax_credits'],
+            wht_carried_forward=result['wht_carried_forward'],
+            capital_gain_tax=result['capital_gain_tax'],
             foreign_income_tax=result['foreign_income_tax'],
             net_tax_payable=result['net_tax_payable'],
             slab_breakdown=result['slab_breakdown'],
@@ -53,14 +56,14 @@ def connect_signals():
         RentIncome, InterestIncome, DividendIncome,
         SoleProprietorshipIncome, OtherIncome, TBSecuritiesIncome,
         QualifyingPayments, TaxCredits,
-        SelfAssessmentPayment, WHTCertificate,
+        SelfAssessmentPayment, WHTCertificate, DisposalOfAsset,
     )
     trigger_models = [
         LocalEmploymentIncome, ForeignIncome, TerminalBenefit,
         RentIncome, InterestIncome, DividendIncome,
         SoleProprietorshipIncome, OtherIncome, TBSecuritiesIncome,
         QualifyingPayments, TaxCredits,
-        SelfAssessmentPayment, WHTCertificate,
+        SelfAssessmentPayment, WHTCertificate, DisposalOfAsset,
     ]
     for model in trigger_models:
         post_save.connect(_income_changed, sender=model, weak=False)
