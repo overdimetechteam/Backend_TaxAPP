@@ -6,7 +6,7 @@ from .views import (
     ArchiveTreeView, SubmissionEditLogsView,
     AccountsQueueView, FinalSubmitView, ClientFinalConfirmView, ArchiveSubmissionView,
     # Income sections
-    LocalEmploymentView, ForeignIncomeView, TerminalBenefitView,
+    LocalEmploymentListView, LocalEmploymentItemView, ForeignIncomeView, TerminalBenefitView,
     RentIncomeView, InterestIncomeView, DividendIncomeView,
     SoleProprietorshipListView, SoleProprietorshipItemView, OtherIncomeView,
     TBSecuritiesIncomeView, CashFlowSuggestedView,
@@ -66,7 +66,8 @@ urlpatterns = [
     path('submissions/<int:pk>/ird-upload/', IRDSubmissionUploadView.as_view(), name='ird_upload'),
 
     # Income sections
-    path('submissions/<int:submission_id>/income/local-employment/', LocalEmploymentView.as_view()),
+    path('submissions/<int:submission_id>/income/local-employment/', LocalEmploymentListView.as_view()),
+    path('income/local-employment/<int:pk>/', LocalEmploymentItemView.as_view()),
     path('submissions/<int:submission_id>/income/foreign/', ForeignIncomeView.as_view()),
     path('submissions/<int:submission_id>/income/terminal-benefit/', TerminalBenefitView.as_view()),
     path('submissions/<int:submission_id>/income/rent/', RentIncomeView.as_view()),

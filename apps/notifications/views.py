@@ -4,8 +4,8 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from django.utils import timezone
 
-from .models import Notification
-from .serializers import NotificationSerializer
+from .models import Notification, ScheduledMessage
+from .serializers import NotificationSerializer, ScheduledMessageSerializer, ScheduledMessageCreateSerializer
 from apps.clients.models import ClientProfile
 
 CONSULTANT_ROLES = ('consultant', 'handling_person', 'admin', 'super_admin')
@@ -111,3 +111,45 @@ class SendReminderView(APIView):
         )
 
         return Response({'message': f'Reminder sent to {profile.full_name}.'})
+
+
+class IsSuperAdminRole(IsAuthenticated):
+    def has_permission(self, request, view):
+        return super().has_permission(request, view) and request.user.role == 'super_admin'
+
+
+class ScheduledMessageListCreateView(generics.ListCreateAPIView):
+    permission_classes = [IsSuperAdminRole]
+
+    def get_queryset(self):
+        return ScheduledMessage.objects.filter(created_by=self.request.user).prefetch_related(
+            'recipients__client_profile__user'
+        )
+
+    def get_serializer_class(self):
+        if self.request.method == 'POST':
+            return ScheduledMessageCreateSerializer
+        return ScheduledMessageSerializer
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        message = serializer.save()
+        return Response(ScheduledMessageSerializer(message).data, status=status.HTTP_201_CREATED)
+
+
+class ScheduledMessageCancelView(APIView):
+    permission_classes = [IsSuperAdminRole]
+
+    def post(self, request, pk=None):
+        try:
+            message = ScheduledMessage.objects.get(pk=pk, created_by=request.user)
+        except ScheduledMessage.DoesNotExist:
+            return Response({'error': 'Message not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        if message.status != 'pending':
+            return Response({'error': 'Only pending messages can be cancelled.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        message.status = 'cancelled'
+        message.save(update_fields=['status'])
+        return Response(ScheduledMessageSerializer(message).data)

@@ -5,6 +5,7 @@ from rest_framework.permissions import IsAuthenticated
 from django.utils import timezone
 from django.http import FileResponse, Http404
 from django.conf import settings
+from decimal import Decimal, ROUND_HALF_UP
 import os
 import shutil
 
@@ -205,6 +206,8 @@ class TaxSubmissionListCreateView(APIView):
             tax_year=tax_year,
             status='draft',
         )
+        _prefill_wht_brought_forward(submission)
+        _prefill_refund_brought_forward(submission)
 
         # Ensure client has a profile; auto-create linked to first consultant if missing
         profile = getattr(request.user, 'client_profile', None)
@@ -384,6 +387,9 @@ class ConfirmCalculationView(APIView):
         submission.net_taxable_income = result['net_taxable_income']
         submission.gross_tax = result['gross_tax']
         submission.total_tax_credits = result['total_tax_credits']
+        submission.wht_carried_forward = result['wht_carried_forward']
+        submission.refund_carried_forward = result['refund_carried_forward']
+        submission.capital_gain_tax = result['capital_gain_tax']
         submission.foreign_income_tax = result['foreign_income_tax']
         submission.net_tax_payable = result['net_tax_payable']
         submission.slab_breakdown = result['slab_breakdown']
@@ -525,6 +531,26 @@ class GeneratePDFView(APIView):
         except TaxSubmission.DoesNotExist:
             raise Http404
 
+        # Recalculate before export so the PDF always reflects the current
+        # calculation logic and latest income data, rather than persisted
+        # totals that may predate a calculation-rule change or a stale save.
+        result = calculate_full_tax(submission)
+        submission.total_assessable_income = result['total_assessable_income']
+        submission.exempt_dividend_income = result['exempt_dividend_income']
+        submission.total_qualifying_payments = result['total_qualifying_payments']
+        submission.personal_relief = result['personal_relief']
+        submission.rent_relief = result['rent_relief']
+        submission.net_taxable_income = result['net_taxable_income']
+        submission.gross_tax = result['gross_tax']
+        submission.total_tax_credits = result['total_tax_credits']
+        submission.wht_carried_forward = result['wht_carried_forward']
+        submission.refund_carried_forward = result['refund_carried_forward']
+        submission.capital_gain_tax = result['capital_gain_tax']
+        submission.foreign_income_tax = result['foreign_income_tax']
+        submission.net_tax_payable = result['net_tax_payable']
+        submission.slab_breakdown = result['slab_breakdown']
+        submission.save()
+
         pdf_buffer = generate_tax_submission_pdf(submission, include_assets_liabilities=True)
         filename = f"Tax_Return_{submission.tax_year.label.replace('/', '-')}_{submission.client.email}.pdf"
 
@@ -586,12 +612,6 @@ class SectionUpdateView(APIView):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
-class LocalEmploymentView(SectionUpdateView):
-    model_class = LocalEmploymentIncome
-    serializer_class = LocalEmploymentIncomeSerializer
-    section_name = 'Local Employment Income'
-
-
 class ForeignIncomeView(SectionUpdateView):
     model_class = ForeignIncome
     serializer_class = ForeignIncomeSerializer
@@ -644,11 +664,11 @@ class CashFlowSuggestedView(APIView):
             return Response({'error': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
 
         sub = TaxSubmission.objects.select_related(
-            'local_employment', 'foreign_income', 'rent_income', 'interest_income',
+            'foreign_income', 'rent_income', 'interest_income',
             'dividend_income', 'other_income', 'qualifying_payments', 'tax_credits',
             'cash_in_hand', 'tb_securities', 'gold_jewellery', 'tax_year',
         ).prefetch_related(
-            'self_assessment_payments', 'bank_balances',
+            'local_employments', 'self_assessment_payments', 'bank_balances',
             'immovable_properties', 'motor_vehicles', 'disposals', 'liabilities',
             'loans_given', 'shares_stocks', 'other_assets',
         ).get(pk=submission_id)
@@ -682,11 +702,10 @@ class CashFlowSuggestedView(APIView):
             if fv(b.balance) != 0
         ]
 
-        # Employment — local + all foreign income streams
-        lei = getattr(sub, 'local_employment', None)
+        # Employment — local (all employers) + all foreign income streams
         fi  = getattr(sub, 'foreign_income', None)
-        emp = fv(lei.amount) if lei else 0.0
-        emp += (fv(fi.employment_service_fee) + fv(fi.foreign_business_income) + fv(fi.other_foreign_income)) if fi else 0.0
+        emp = sum(fv(lei.amount) for lei in sub.local_employments.all())
+        emp += (fv(fi.employment_service_fee) + fv(fi.foreign_business_income) + fv(fi.foreign_interest_income) + fv(fi.other_foreign_income)) if fi else 0.0
 
         # Interest — savings from the dedicated Interest Income section (Total Interest Received field)
         ii           = getattr(sub, 'interest_income', None)
@@ -700,9 +719,9 @@ class CashFlowSuggestedView(APIView):
         tbs = getattr(sub, 'tb_securities', None)
         tb_sec = fv(tbs.gross_amount) if tbs else 0.0
 
-        # Dividend (taxable + exempt)
+        # Dividend (taxable + exempt, net of final WHT — exempt_amount is gross)
         di = getattr(sub, 'dividend_income', None)
-        dividend = (fv(di.amount) + fv(di.exempt_amount)) if di else 0.0
+        dividend = (fv(di.amount) + fv(di.exempt_amount) - fv(di.final_wht)) if di else 0.0
 
         # Disposals by category
         disposals_by_cat = {}
@@ -945,6 +964,19 @@ class MultiRowItemView(APIView):
             )
         obj.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+# Local Employment — unlimited local employers per submission
+class LocalEmploymentListView(MultiRowSectionView):
+    model_class = LocalEmploymentIncome
+    serializer_class = LocalEmploymentIncomeSerializer
+    section_name = 'Local Employment Income'
+
+
+class LocalEmploymentItemView(MultiRowItemView):
+    model_class = LocalEmploymentIncome
+    serializer_class = LocalEmploymentIncomeSerializer
+    section_name = 'Local Employment Income'
 
 
 # Sole Proprietorship
@@ -1847,6 +1879,54 @@ def _seed_declarant_from_profile(submission):
     )
 
 
+def _prefill_wht_brought_forward(new_submission):
+    """
+    Pulls last year's unused WHT credit (wht_carried_forward) from the client's most
+    recent FINALIZED submission for tax_year - 1, and seeds it as this year's
+    TaxCredits.wht_brought_forward. Only client_confirmed / archived prior-year
+    submissions are trusted as a source — an in-progress prior year's figure could
+    still change before it's finalized.
+    """
+    prev = TaxSubmission.objects.filter(
+        client_id=new_submission.client_id,
+        tax_year__year=new_submission.tax_year.year - 1,
+        status__in=('client_confirmed', 'archived'),
+    ).order_by('-created_at').first()
+
+    if prev and prev.wht_carried_forward:
+        TaxCredits.objects.update_or_create(
+            submission=new_submission,
+            defaults={'wht_brought_forward': prev.wht_carried_forward},
+        )
+
+
+REFUND_CARRY_FORWARD_RATE = Decimal('0.60')
+
+
+def _prefill_refund_brought_forward(new_submission):
+    """
+    Pulls 60% of last year's unused refund entitlement (refund_carried_forward) from
+    the client's most recent FINALIZED submission for tax_year - 1, and seeds it as
+    this year's TaxCredits.refund_brought_forward. Only client_confirmed / archived
+    prior-year submissions are trusted as a source — an in-progress prior year's
+    figure could still change before it's finalized.
+    """
+    prev = TaxSubmission.objects.filter(
+        client_id=new_submission.client_id,
+        tax_year__year=new_submission.tax_year.year - 1,
+        status__in=('client_confirmed', 'archived'),
+    ).order_by('-created_at').first()
+
+    if prev and prev.refund_carried_forward:
+        claimable = (prev.refund_carried_forward * REFUND_CARRY_FORWARD_RATE).quantize(
+            Decimal('0.01'), rounding=ROUND_HALF_UP
+        )
+        TaxCredits.objects.update_or_create(
+            submission=new_submission,
+            defaults={'refund_brought_forward': claimable},
+        )
+
+
 def _prefill_from_previous(new_submission, prev_submission):
     """
     Copy carry-forward data from the previous year's submission to the new one.
@@ -2010,6 +2090,8 @@ class SendAssessmentFormView(APIView):
             tax_year=tax_year,
             status='draft',
         )
+        _prefill_wht_brought_forward(new_sub)
+        _prefill_refund_brought_forward(new_sub)
 
         if prev:
             _prefill_from_previous(new_sub, prev)
@@ -2088,6 +2170,8 @@ class SendAssessmentFormsBulkView(APIView):
                 tax_year=tax_year,
                 status='draft',
             )
+            _prefill_wht_brought_forward(new_sub)
+            _prefill_refund_brought_forward(new_sub)
 
             if prev:
                 _prefill_from_previous(new_sub, prev)

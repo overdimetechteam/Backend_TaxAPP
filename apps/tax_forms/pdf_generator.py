@@ -252,10 +252,11 @@ def _add_main_return(els, st, cages):
 
 
 # ── Schedule 1 — Employment Income ───────────────────────────────────────────
-def _add_schedule_1(els, st, lei, fi, tb):
+def _add_schedule_1(els, st, local_employments, fi, tb):
     _sec(els, st, 'Schedule 1 - Employment income')
 
-    local_amt   = _D(lei and lei.amount)
+    local_employments = local_employments or []
+    local_amt   = sum((_D(lei.amount) for lei in local_employments), Decimal('0'))
     foreign_amt = _D(fi  and fi.employment_service_fee)
     total_emp   = local_amt + foreign_amt
 
@@ -270,19 +271,20 @@ def _add_schedule_1(els, st, lei, fi, tb):
         _P('Remuneration (Rs.)', st['tbl_hdr']),
     ]
     rows = []
-    if local_amt > 0:
-        rows.append([
-            _P('1', st['tbl_cell']),
-            _P('Local employment', st['tbl_cell']),
-            _P((lei and lei.employer_name) or '—', st['tbl_cell']),
-            _P('', st['tbl_cell']),
-            _P(_fmt(local_amt), st['tbl_cell_r']),
-        ])
+    for lei in local_employments:
+        if _D(lei.amount) > 0:
+            rows.append([
+                _P(str(len(rows) + 1), st['tbl_cell']),
+                _P('Local employment', st['tbl_cell']),
+                _P(lei.employer_name or '—', st['tbl_cell']),
+                _P('', st['tbl_cell']),
+                _P(_fmt(_D(lei.amount)), st['tbl_cell_r']),
+            ])
     if foreign_amt > 0:
         rows.append([
             _P(str(len(rows) + 1), st['tbl_cell']),
             _P('Foreign employment / service fee', st['tbl_cell']),
-            _P((fi and fi.source_country) or '—', st['tbl_cell']),
+            _P((fi and fi.foreign_employer_name) or '—', st['tbl_cell']),
             _P('', st['tbl_cell']),
             _P(_fmt(foreign_amt), st['tbl_cell_r']),
         ])
@@ -393,16 +395,19 @@ def _add_schedule_2(els, st, sole_props, fi):
 
 
 # ── Schedule 3 — Investment Income ───────────────────────────────────────────
-def _add_schedule_3(els, st, ri, ii, di, rent_relief, tbs=None):
+def _add_schedule_3(els, st, ri, ii, di, rent_relief, tbs=None, fi=None):
     _sec(els, st, 'Schedule 3 - Investment income')
 
-    rent_gross  = _D(ri and ri.gross_amount)
-    int_amt     = _D(ii and ii.amount)
-    tb_amt      = _D(tbs and tbs.gross_amount)
-    div_taxable = _D(di and di.amount)
-    div_exempt  = _D(di and di.exempt_amount)
-    rr          = _D(rent_relief)
-    total_inv   = rent_gross + int_amt + tb_amt   # dividends excluded — reported in Part III
+    rent_gross   = _D(ri and ri.gross_amount)
+    int_amt      = _D(ii and ii.amount)
+    # Foreign interest is exempt from tax — excluded from taxable investment income,
+    # shown as a separate disclosure line below instead (mirrors exempt dividend income).
+    foreign_int  = _D(fi and fi.foreign_interest_income)
+    tb_amt       = _D(tbs and tbs.gross_amount)
+    div_taxable  = _D(di and di.amount)
+    div_exempt   = _D(di and di.exempt_amount)
+    rr           = _D(rent_relief)
+    total_inv    = rent_gross + int_amt + tb_amt   # dividends excluded — reported in Part III
 
     # Part I — Taxable investment income (rent + interest + T-Bills)
     els.append(_P('Part I : Investment income (Taxable)', st['sec_hdr']))
@@ -432,10 +437,15 @@ def _add_schedule_3(els, st, ri, ii, di, rent_relief, tbs=None):
     els.append(KeepTogether(_sched_table(hdr, rows, cw, st)))
     els.append(Spacer(1, 3))
 
-    els.append(_cage_tbl([
+    cage_315_rows = [
         _cr(st, 'Total investment income (Rs.)',          315, total_inv, bold=True),
         _cr(st, 'Rent relief — 25% of gross rent (Rs.)',  316, rr),
-    ]))
+    ]
+    if foreign_int > 0:
+        cage_315_rows.append(
+            _cr(st, 'Foreign interest income (exempt, informational)', None, foreign_int)
+        )
+    els.append(_cage_tbl(cage_315_rows))
     els.append(Spacer(1, 3))
 
     # Part III — Dividend income
@@ -552,13 +562,13 @@ def _add_schedule_6(els, st, di, wht_certs):
     rows = []
     total_wht = Decimal('0')
     sno = 1
-    # Dividend WHT (final)
+    # Dividend WHT (final) — real entered figure, not derived/assumed
     div_exempt = _D(di and di.exempt_amount)
-    if div_exempt > 0:
-        wht_on_div = (div_exempt * Decimal('15') / Decimal('85')).quantize(Decimal('0.01'))
+    wht_on_div = _D(di and di.final_wht)
+    if div_exempt > 0 or wht_on_div > 0:
         rows.append([
             _P(str(sno), st['tbl_cell']),
-            _P('Dividend (15% WHT final)', st['tbl_cell']),
+            _P('Dividend (final WHT)', st['tbl_cell']),
             _P('', st['tbl_cell']),
             _P('', st['tbl_cell']),
             _P(_fmt(div_exempt), st['tbl_cell_r']),
@@ -589,7 +599,7 @@ def _add_schedule_6(els, st, di, wht_certs):
 
 
 # ── Schedule 7 — AIT / WHT ───────────────────────────────────────────────────
-def _add_schedule_7(els, st, ri, ii, tc, wht_certs):
+def _add_schedule_7(els, st, ri, ii, tc, wht_certs, submission):
     _sec(els, st, 'Schedule 7A - AIT / WHT deducted at source (not final)')
 
     int_wht  = _D(ii and ii.wht_deducted)
@@ -607,9 +617,14 @@ def _add_schedule_7(els, st, ri, ii, tc, wht_certs):
     total_int_wht  = int_wht  + cert_int
     total_rent_wht = rent_wht + cert_rent
     total_ait      = total_int_wht + total_rent_wht + cert_svc
-    # No prior-year carried-forward balance is tracked, so the full amount deducted
-    # this year is available for set-off (mirrors calculate_full_tax's total_credits).
-    credit_used    = total_ait
+
+    wht_brought_forward = _D(tc and tc.wht_brought_forward)
+    wht_carried_forward = _D(getattr(submission, 'wht_carried_forward', None))
+    total_with_bf = total_ait + wht_brought_forward
+    # Back-solved so the cage arithmetic (707+708-710=711) reconciles to the
+    # authoritative wht_carried_forward from calculate_full_tax, even though the
+    # itemized rows above only cover interest/rent/service-fee WHT certificates.
+    credit_used = max(Decimal('0'), total_with_bf - wht_carried_forward)
 
     hdr = [
         _P('S/N',                   st['tbl_hdr']),
@@ -643,10 +658,10 @@ def _add_schedule_7(els, st, ri, ii, tc, wht_certs):
     els.append(Spacer(1, 3))
     els.append(_cage_tbl([
         _cr(st, 'Total AIT/WHT deducted at source (Rs.)',       707, total_ait),
-        _cr(st, 'Add : Balance brought forward from last Y/A (Rs.)', 708, Decimal('0')),
-        _cr(st, 'Total (Rs.)',                                  709, total_ait, bold=True),
+        _cr(st, 'Add : Balance brought forward from last Y/A (Rs.)', 708, wht_brought_forward),
+        _cr(st, 'Total (Rs.)',                                  709, total_with_bf, bold=True),
         _cr(st, 'Less : AIT/WHT set off against tax payable (Rs.)', 710, credit_used),
-        _cr(st, 'Balance to carry forward (Rs.)',               711, max(Decimal('0'), total_ait - credit_used)),
+        _cr(st, 'Balance to carry forward (Rs.)',               711, wht_carried_forward),
     ]))
     els.append(Spacer(1, 5))
 
@@ -661,6 +676,12 @@ def _add_schedule_8(els, st, submission):
     # foreign_income_tax is already net of foreign_tax_paid credit (tax_calculator.py,
     # slabs capped at 15% with personal relief spillover applied to foreign income first).
     ftax_net = _D(submission.foreign_income_tax)
+
+    # Capital gain — net gain from disposal of assets, taxed flat at 15% (tax_calculator.py).
+    capital_gain = max(Decimal('0'), sum(
+        (_D(d.sales_proceed) - _D(d.cost)) for d in submission.disposals.all()
+    ))
+    capital_gain_tax = _D(submission.capital_gain_tax)
 
     # 809.A.1 = local (non-foreign) taxable income taxed at progressive slab rates
     slab_taxable = sum(_D(row.get('taxable_amount', 0)) for row in (submission.slab_breakdown or []))
@@ -719,7 +740,7 @@ def _add_schedule_8(els, st, submission):
     els.append(_P('C.   Tax on gain on realization of investment assets from schedule 3', st['sec_hdr']))
     els.append(Spacer(1, 2))
     els.append(_rate_tbl([
-        _rr('', '806.1', Decimal('0'), '10%', '806.3', Decimal('0')),
+        _rr('', '806.1', capital_gain, '15%', '806.3', capital_gain_tax),
     ]))
     els.append(Spacer(1, 4))
 
@@ -763,22 +784,37 @@ def _add_schedule_9(els, st, submission, tc):
 
     apit          = _D(tc and tc.apit_on_salary)
     partner_tc    = _D(tc and tc.partnership_tax_credit)
+    # "Tax Refund Claim" is now just the display name for refund_brought_forward
+    # (60% of last Y/A's unused refund) — the old free-typed tax_refund_claim
+    # field has been retired from the form and from the calculation.
+    refund_claim  = _D(tc and tc.refund_brought_forward)
+    refund_carried_forward = _D(getattr(submission, 'refund_carried_forward', None))
     foreign_tax_paid = _D(getattr(getattr(submission, 'foreign_income', None), 'foreign_tax_paid', None))
     sap_total     = sum(_D(s.amount) for s in submission.self_assessment_payments.all())
+    capital_gain_tax = _D(submission.capital_gain_tax)
     total_credits = _D(submission.total_tax_credits)
     # Advance income tax / WHT credit = total credits less the other line items below
-    # (rent/interest/business/TB-securities WHT plus WHT certificates), so the printed
-    # rows always sum to the Total Tax Credits figure above.
-    wht_ait       = max(Decimal('0'), total_credits - apit - partner_tc - sap_total)
+    # (rent/interest/business/TB-securities WHT plus WHT certificates, Partnership
+    # credit, Tax Refund Claim / Refund Brought Forward, Self-Assessment, and
+    # Capital Gains Tax — all of which are now part of total_tax_credits), so the
+    # printed rows always sum to the Total Tax Credits figure above.
+    wht_ait       = max(Decimal('0'), total_credits - apit - partner_tc - refund_claim - sap_total - capital_gain_tax)
 
-    els.append(_cage_tbl([
+    cage_9_rows = [
         _cr(st, 'APIT on employment income — T10 certificate (Rs.)',  '903A', apit),
         _cr(st, 'Foreign tax paid / WHT credit (Cage 901) (Rs.)',      901,  foreign_tax_paid),
         _cr(st, 'Advance income tax credit — Enter amount in Cage 710 of Schedule 7A (Rs.)', 908, wht_ait),
         _cr(st, 'Partnership tax credit (Rs.)',                        909,  partner_tc),
         _cr(st, 'Total installment payments (from Schedule 9B) (Rs.)', 911,  sap_total),
+        _cr(st, 'Tax refund claim — 60% from last Y/A (Rs.)',         None, refund_claim),
+        _cr(st, 'Capital gains tax credit (Rs.)',                     None, capital_gain_tax),
         _cr(st, 'Total tax credits (Rs.)',                             912,  total_credits, bold=True),
-    ]))
+    ]
+    if refund_carried_forward > 0:
+        cage_9_rows.append(
+            _cr(st, 'Refund carried forward — 60% to next Y/A (Rs.)', None, refund_carried_forward)
+        )
+    els.append(_cage_tbl(cage_9_rows))
     els.append(Spacer(1, 5))
 
 
@@ -906,7 +942,7 @@ def _add_schedule_10(els, st):
 # ── Tax Computation Summary ───────────────────────────────────────────────────
 def _add_tax_computation_summary(els, st, submission):
     """Client-facing tax computation summary — shown first in the PDF."""
-    lei  = getattr(submission, 'local_employment',    None)
+    local_employments = list(submission.local_employments.all())
     fi   = getattr(submission, 'foreign_income',      None)
     tb   = getattr(submission, 'terminal_benefit',    None)
     ri   = getattr(submission, 'rent_income',         None)
@@ -918,6 +954,9 @@ def _add_tax_computation_summary(els, st, submission):
     qp   = getattr(submission, 'qualifying_payments', None)
     tc   = getattr(submission, 'tax_credits',         None)
     dd   = getattr(submission, 'declarant_details',   None)
+    capital_gain = max(Decimal('0'), sum(
+        (_D(d.sales_proceed) - _D(d.cost)) for d in submission.disposals.all()
+    ))
 
     S   = st['tbl_cell']
     SR  = st['tbl_cell_r']
@@ -962,7 +1001,11 @@ def _add_tax_computation_summary(els, st, submission):
             inc_rows.append([_P(str(sno), S), _P(label, S), _P(_fmt(val), SR)])
             sno += 1
 
-    _inc('Local Employment Income',                  lei and lei.amount)
+    if local_employments:
+        for lei in local_employments:
+            _inc(f'Local Employment Income ({lei.employer_name or "Employer"})', lei.amount)
+    else:
+        _inc('Local Employment Income', None)
     _inc('Foreign Employment / Service Fee',         fi  and fi.employment_service_fee)
     _inc('Foreign Business Income',                  fi  and fi.foreign_business_income)
     _inc('Foreign Other Income',                     fi  and fi.other_foreign_income)
@@ -976,23 +1019,44 @@ def _add_tax_computation_summary(els, st, submission):
     else:
         _inc('Sole Proprietorship / Business Income', None)
     _inc('Other Income',                             oi  and oi.amount)
+    _inc('Capital Gain (from disposal of assets)',   capital_gain)
 
     tai = _D(submission.total_assessable_income)
     inc_rows.append([
         _P('', SB), _P('Total Assessable Income', SB), _P(_fmt(tai), SBR),
     ])
 
+    # Exempt foreign interest (informational, not in TAI)
+    trailing_info_rows = 0
+    exempt_foreign_int = _D(fi and fi.foreign_interest_income)
+    if exempt_foreign_int > 0:
+        inc_rows.append([
+            _P('', S),
+            _P('  Foreign Interest Income (exempt — not in TAI)', st['small_gray']),
+            _P(_fmt(exempt_foreign_int), st['small_gray']),
+        ])
+        trailing_info_rows += 1
+
     # Exempt dividend (informational, shown green-ish via italic)
     exempt_div = _D(submission.exempt_dividend_income)
     if exempt_div > 0:
         inc_rows.append([
             _P('', S),
-            _P('  Exempt Dividend Income (15% WHT — not in TAI)', st['small_gray']),
+            _P('  Exempt Dividend Income (final WHT — not in TAI)', st['small_gray']),
             _P(_fmt(exempt_div), st['small_gray']),
         ])
+        trailing_info_rows += 1
+        div_final_wht = _D(di and di.final_wht)
+        if div_final_wht > 0:
+            inc_rows.append([
+                _P('', S),
+                _P('  Final WHT on Exempt Dividends', st['small_gray']),
+                _P(_fmt(div_final_wht), st['small_gray']),
+            ])
+            trailing_info_rows += 1
 
     # Total row is the last non-exempt row; find its index
-    total_row_idx = len(inc_rows) - (2 if exempt_div > 0 else 1)
+    total_row_idx = len(inc_rows) - 1 - trailing_info_rows
     inc_tbl = Table(inc_rows, colWidths=[UW*0.06, UW*0.66, UW*0.28])
     inc_tbl.setStyle(TableStyle([
         ('GRID',          (0, 0), (-1, -1), 0.4, MG),
@@ -1049,6 +1113,8 @@ def _add_tax_computation_summary(els, st, submission):
     els.append(Spacer(1, 4))
 
     # ── Foreign Income Tax (progressive slabs, capped at 15%) ─────────────────
+    # Foreign interest is exempt — excluded (must match submission.foreign_income_tax,
+    # which tax_calculator.py already computes without it).
     foreign_total = (
         _D(fi and fi.employment_service_fee) +
         _D(fi and fi.foreign_business_income) +
@@ -1086,6 +1152,29 @@ def _add_tax_computation_summary(els, st, submission):
     else:
         ftax_net  = Decimal('0')
         sec_label = 'C.'
+
+    # ── Capital Gains Tax (flat 15% on net gain from disposal of assets) ──────
+    capital_gain_tax = _D(submission.capital_gain_tax)
+    if capital_gain_tax > 0:
+        _sec(els, st, f'{sec_label}  Capital Gains Tax (flat 15%)')
+        cg_rows = [
+            [_P('Capital Gain (net, from disposal of assets)', S), _P(_fmt(capital_gain), SR)],
+            [_P('Capital Gains Tax (15%)', SB),                    _P(_fmt(capital_gain_tax), SBR)],
+        ]
+        cg_tbl = Table(cg_rows, colWidths=[UW*0.72, UW*0.28])
+        cg_tbl.setStyle(TableStyle([
+            ('GRID',          (0, 0), (-1, -1), 0.4, MG),
+            ('LINEABOVE',     (0, -1), (-1, -1), 0.8, BK),
+            ('TOPPADDING',    (0, 0), (-1, -1), 2),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 2),
+            ('LEFTPADDING',   (0, 0), (-1, -1), 4),
+            ('RIGHTPADDING',  (0, 0), (-1, -1), 4),
+            ('VALIGN',        (0, 0), (-1, -1), 'MIDDLE'),
+            ('FONTSIZE',      (0, 0), (-1, -1), 8),
+        ]))
+        els.append(cg_tbl)
+        els.append(Spacer(1, 4))
+        sec_label = chr(ord(sec_label[0]) + 1) + '.'
 
     # ── Progressive Tax Computation ────────────────────────────────────────────
     _sec(els, st, f'{sec_label}  Tax Computation on Taxable Income')
@@ -1130,6 +1219,10 @@ def _add_tax_computation_summary(els, st, submission):
 
     apit         = _D(tc and tc.apit_on_salary)
     partner_tc   = _D(tc and tc.partnership_tax_credit)
+    # "Tax Refund Claim" is now just the display name for refund_brought_forward
+    # (60% of last Y/A's unused refund) — the old free-typed tax_refund_claim
+    # field has been retired from the form and from the calculation.
+    refund_claim = _D(tc and tc.refund_brought_forward)
     rent_wht     = _D(ri and ri.wht_deducted)
     interest_wht = _D(ii and ii.wht_deducted)
     sole_wht     = sum(_D(sp.wht_deducted) for sp in sole_props)
@@ -1139,6 +1232,9 @@ def _add_tax_computation_summary(els, st, submission):
         _D(c.amount) for c in submission.wht_certificates.exclude(category__in=('rent', 'interest'))
     )
     sap_total    = sum(_D(s.amount) for s in submission.self_assessment_payments.all())
+    wht_brought_forward = _D(tc and tc.wht_brought_forward)
+    wht_carried_forward = _D(getattr(submission, 'wht_carried_forward', None))
+    refund_carried_forward = _D(getattr(submission, 'refund_carried_forward', None))
     total_credits = _D(submission.total_tax_credits)
 
     cr_rows = []
@@ -1152,9 +1248,16 @@ def _add_tax_computation_summary(els, st, submission):
     _cred('WHT on Business Income (deducted at source)', sole_wht)
     _cred('WHT on T-Bills / Securities (deducted at source)', tb_wht)
     _cred('WHT Certificates (Service Fees / Employment / Other)', other_certs)
+    _cred('WHT Brought Forward (from last Y/A)',   wht_brought_forward)
     _cred('Partnership Tax Credit',                partner_tc)
+    _cred('Tax Refund Claim (60% from last Y/A)',  refund_claim)
+    _cred('Capital Gains Tax',                     capital_gain_tax)
     _cred('Self-Assessment Installments',          sap_total)
     cr_rows.append([_P('Total Tax Credits', SB), _P(f'({_fmt(total_credits)})', SBR)])
+    if wht_carried_forward > 0:
+        cr_rows.append([_P('WHT Carried Forward (to next Y/A)', S), _P(_fmt(wht_carried_forward), SR)])
+    if refund_carried_forward > 0:
+        cr_rows.append([_P('Refund Carried Forward (60% to next Y/A)', S), _P(_fmt(refund_carried_forward), SR)])
 
     cr_tbl = Table(cr_rows, colWidths=[UW*0.72, UW*0.28])
     cr_tbl.setStyle(TableStyle([
@@ -1171,13 +1274,19 @@ def _add_tax_computation_summary(els, st, submission):
     els.append(Spacer(1, 4))
 
     # ── Net Tax Payable ────────────────────────────────────────────────────────
-    net_tax = _D(submission.net_tax_payable)
+    # Computed directly from the four rows below (rather than trusted from the
+    # separately-persisted submission.net_tax_payable field) so this total can
+    # never drift out of sync with what the document itself is showing above
+    # it — floored at zero the same way calculate_full_tax's two-step credit
+    # application always is (credits can never turn into a negative bill).
+    net_tax = max(Decimal('0.00'), gross_tax + ftax_net + capital_gain_tax - total_credits)
     npay_rows = [
         [_P('Gross Tax on Taxable Income', S),  _P(_fmt(gross_tax),   SR)],
         [_P('Net Foreign Income Tax (max 15%)', S), _P(_fmt(ftax_net),    SR)],
+        [_P('Capital Gains Tax (flat 15%)', S), _P(_fmt(capital_gain_tax), SR)],
         [_P('Less: Total Tax Credits', S),       _P(f'({_fmt(total_credits)})', SR)],
-        [_P('NET TAX PAYABLE (Rs.)', SB),        _P(_fmt(net_tax),     SBR)],
     ]
+    npay_rows.append([_P('NET TAX PAYABLE (Rs.)', SB), _P(_fmt(net_tax), SBR)])
     npay_tbl = Table(npay_rows, colWidths=[UW*0.72, UW*0.28])
     npay_tbl.setStyle(TableStyle([
         ('GRID',          (0, 0), (-1, -1), 0.5, MG),
@@ -1532,7 +1641,7 @@ def generate_tax_submission_pdf(submission, include_assets_liabilities=True) -> 
     els = []
 
     # Related objects (shared across sections)
-    lei       = getattr(submission, 'local_employment',    None)
+    local_employments = list(submission.local_employments.all())
     fi        = getattr(submission, 'foreign_income',      None)
     tb        = getattr(submission, 'terminal_benefit',    None)
     ri        = getattr(submission, 'rent_income',         None)
@@ -1563,9 +1672,11 @@ def generate_tax_submission_pdf(submission, include_assets_liabilities=True) -> 
     els.append(PageBreak())
 
     # Cage values for official return
-    cage_10  = _D(lei and lei.amount) + _D(fi and fi.employment_service_fee)
+    cage_10  = sum((_D(lei.amount) for lei in local_employments), Decimal('0')) + _D(fi and fi.employment_service_fee)
     cage_20  = sole_prop_total_pdf + _D(fi and fi.foreign_business_income)
-    cage_30  = _D(ri and ri.gross_amount) + _D(ii and ii.amount) + _D(di and di.amount) + _D(tbs and tbs.gross_amount)
+    # Foreign interest is exempt — excluded (matches Schedule 3 / cage 315).
+    cage_30  = (_D(ri and ri.gross_amount) + _D(ii and ii.amount) +
+                _D(di and di.amount) + _D(tbs and tbs.gross_amount))
     cage_40  = _D(oi and oi.amount) + _D(fi and fi.other_foreign_income)
     cage_50  = _D(submission.total_assessable_income)
     cage_60  = _D(submission.rent_relief)
@@ -1576,12 +1687,19 @@ def generate_tax_submission_pdf(submission, include_assets_liabilities=True) -> 
     cage_110 = cage_90 + cage_100
     cage_120 = _D(submission.net_taxable_income)
     cage_130 = Decimal('0')
-    cage_140 = Decimal('0')
+    cage_140 = _D(submission.capital_gain_tax)
     cage_150 = _D(submission.gross_tax)
     cage_160 = Decimal('0')
     cage_170 = cage_130 + cage_140 + cage_150 + cage_160
     cage_180 = _D(submission.total_tax_credits)
-    cage_190 = _D(submission.net_tax_payable)
+    # cage_170 (130+140+150+160) deliberately excludes Foreign Income Tax — it
+    # has its own separate route (Schedule 9 cage 901 / net foreign tax) — so
+    # Balance tax payable is NOT simply "170-180" despite the row label; it
+    # must add Net Foreign Income Tax back in, floored at zero. Sourced from
+    # submission.foreign_income_tax (persisted on the same row as cage_140/
+    # 150/180 above) rather than submission.net_tax_payable directly, so this
+    # cage can never drift out of sync with the other cages shown alongside it.
+    cage_190 = max(Decimal('0'), cage_170 + _D(submission.foreign_income_tax) - cage_180)
     cage_200 = max(Decimal('0'), cage_180 - cage_170)
 
     exempt_div = _D(submission.exempt_dividend_income)
@@ -1600,13 +1718,13 @@ def generate_tax_submission_pdf(submission, include_assets_liabilities=True) -> 
     _add_header(els, st, submission, dd, sys_settings)
     _add_main_return(els, st, cages)
 
-    _add_schedule_1(els, st, lei, fi, tb)
+    _add_schedule_1(els, st, local_employments, fi, tb)
     _add_schedule_2(els, st, sole_props_pdf, fi)
-    _add_schedule_3(els, st, ri, ii, di, cage_60, tbs)
+    _add_schedule_3(els, st, ri, ii, di, cage_60, tbs, fi)
     _add_schedule_4(els, st, oi, fi)
     _add_schedule_5(els, st, qp, cage_100)
     _add_schedule_6(els, st, di, wht_certs)
-    _add_schedule_7(els, st, ri, ii, tc, wht_certs)
+    _add_schedule_7(els, st, ri, ii, tc, wht_certs, submission)
     _add_schedule_8(els, st, submission)
     _add_schedule_9(els, st, submission, tc)
     _add_schedule_9b(els, st, submission)

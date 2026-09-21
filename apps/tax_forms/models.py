@@ -79,6 +79,18 @@ class TaxSubmission(models.Model):
     total_tax_credits = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0.00'))
     foreign_income_tax = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0.00'))
     net_tax_payable = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0.00'))
+    # Unused WHT credit left over after this year's tax is fully offset — flows into
+    # next year's TaxCredits.wht_brought_forward when that submission is created.
+    wht_carried_forward = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0.00'))
+    # Unused refund entitlement left over after this year's tax is fully offset by
+    # non-WHT credits (APIT, Self-Assessment, Partnership Credit, Tax Refund Claim,
+    # Refund Brought Forward) — the excess that would otherwise be silently lost.
+    # 60% of this flows into next year's TaxCredits.refund_brought_forward when that
+    # submission is created.
+    refund_carried_forward = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0.00'))
+    # Flat 15% tax on net capital gain from disposal of assets — added to
+    # net_tax_payable last, never reduced by WHT/APIT/self-assessment/etc.
+    capital_gain_tax = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0.00'))
     # Slab breakdown stored as JSON after each calculation
     slab_breakdown = models.JSONField(null=True, blank=True)
 
@@ -97,6 +109,9 @@ class TaxSubmission(models.Model):
     )
     payment_updated_at = models.DateTimeField(null=True, blank=True)
     payment_slip = models.FileField(upload_to='payment_slips/%Y/%m/', null=True, blank=True)
+    payment_reminder_3d_sent = models.BooleanField(default=False)
+    payment_reminder_5d_sent = models.BooleanField(default=False)
+    payment_reminder_10d_sent = models.BooleanField(default=False)
 
     # IRD submission tracking
     ird_submission_file = models.FileField(
@@ -124,7 +139,8 @@ class TaxSubmission(models.Model):
 # ─── INCOME SECTION ──────────────────────────────────────────────────────────
 
 class LocalEmploymentIncome(models.Model):
-    submission = models.OneToOneField(TaxSubmission, on_delete=models.CASCADE, related_name='local_employment')
+    # Up to 3 local employers per submission (Change: multiple employee incomes) — capped in the view, not here.
+    submission = models.ForeignKey(TaxSubmission, on_delete=models.CASCADE, related_name='local_employments')
     amount = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0.00'))
     employer_name = EncryptedCharField(max_length=200, blank=True, null=True)
     notes = models.TextField(blank=True, null=True)
@@ -136,8 +152,12 @@ class LocalEmploymentIncome(models.Model):
 class ForeignIncome(models.Model):
     submission = models.OneToOneField(TaxSubmission, on_delete=models.CASCADE, related_name='foreign_income')
     source_country = models.CharField(max_length=100, blank=True, null=True)
+    foreign_employer_name = EncryptedCharField(max_length=200, blank=True, null=True,
+                                                help_text='Name of the foreign employer / company paying the income')
     employment_service_fee = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0.00'))
     foreign_business_income = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0.00'))
+    foreign_interest_income = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0.00'),
+                                                   help_text='Interest earned on foreign bank deposits / investments')
     other_foreign_income = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0.00'))
     foreign_tax_paid = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0.00'),
                                            help_text='Foreign tax already paid — eligible as tax credit')
@@ -150,7 +170,11 @@ class ForeignIncome(models.Model):
 
     @property
     def total(self):
-        return self.employment_service_fee + self.foreign_business_income + self.other_foreign_income
+        # Foreign Interest is exempt from tax — excluded from taxable foreign income.
+        return (
+            self.employment_service_fee + self.foreign_business_income +
+            self.other_foreign_income
+        )
 
 
 class TerminalBenefit(models.Model):
@@ -185,11 +209,16 @@ class InterestIncome(models.Model):
 
 class DividendIncome(models.Model):
     submission = models.OneToOneField(TaxSubmission, on_delete=models.CASCADE, related_name='dividend_income')
-    # Taxable dividends (not from resident companies subject to 15% WHT)
+    # Taxable dividends (not from resident companies subject to final WHT)
     amount = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0.00'))
-    # Exempt dividends from resident companies subject to 15% WHT
+    # Gross dividends from resident companies subject to final WHT — exempt from tax,
+    # excluded from assessable income entirely (the WHT below fully settles the liability).
     exempt_amount = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0.00'),
-                                        help_text='Dividends from resident companies at 15% WHT — exempt from tax')
+                                        help_text='Gross dividends from resident companies subject to final WHT — exempt from tax')
+    # Actual WHT deducted at source on the exempt dividend (from the dividend certificate) —
+    # informational/disclosure only (Schedule 6A); never a credit against other tax.
+    final_wht = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0.00'),
+                                    help_text='Final WHT deducted on exempt dividends, per the dividend certificate')
     notes = models.TextField(blank=True, null=True)
 
     class Meta:
@@ -266,6 +295,12 @@ class TaxCredits(models.Model):
     apit_on_salary = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0.00'))
     wht_rent_interest_service = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0.00'))
     partnership_tax_credit = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0.00'))
+    tax_refund_claim = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0.00'),
+                                           help_text='Refund claimed for tax withheld / paid in excess of the liability')
+    wht_brought_forward = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0.00'),
+                                               help_text='Unused WHT credit carried forward from last Y/A (prefilled from last year\'s carry-forward; editable)')
+    refund_brought_forward = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0.00'),
+                                                  help_text='60% of last Y/A\'s unused refund entitlement, claimable as a tax credit this year (prefilled from last year\'s carry-forward; editable)')
     notes = models.TextField(blank=True, null=True)
 
     class Meta:
