@@ -677,16 +677,20 @@ def _add_schedule_8(els, st, submission):
     # slabs capped at 15% with personal relief spillover applied to foreign income first).
     ftax_net = _D(submission.foreign_income_tax)
 
-    # Capital gain — net gain from disposal of assets, taxed flat at 15% (tax_calculator.py).
+    # Capital gain — net gain from Income-section "Capital Gain" disposal entries only,
+    # taxed flat at 15% (tax_calculator.py). Assets-section-only disposals are excluded.
     capital_gain = max(Decimal('0'), sum(
-        (_D(d.sales_proceed) - _D(d.cost)) for d in submission.disposals.all()
+        (_D(d.sales_proceed) - _D(d.cost)) for d in submission.disposals.all() if d.is_capital_gain
     ))
     capital_gain_tax = _D(submission.capital_gain_tax)
 
     # 809.A.1 = local (non-foreign) taxable income taxed at progressive slab rates
     slab_taxable = sum(_D(row.get('taxable_amount', 0)) for row in (submission.slab_breakdown or []))
-    # 809.B.1 = foreign taxable income (net of personal relief), taxed at slab rates capped at 15%
-    foreign_taxable = max(Decimal('0'), taxable - slab_taxable)
+    # 809.B.1 = foreign taxable income (net of personal relief), taxed at slab rates capped at 15%.
+    # `taxable` (net_taxable_income) includes capital_gain, which is in neither
+    # the local slab breakdown nor the foreign taxable bucket, so it must be
+    # backed out here too.
+    foreign_taxable = max(Decimal('0'), taxable - slab_taxable - capital_gain)
 
     def _rate_tbl(rows):
         """6-col table: label | cage.1 | amt.1 | rate | cage.3 | amt.3"""
@@ -955,7 +959,7 @@ def _add_tax_computation_summary(els, st, submission):
     tc   = getattr(submission, 'tax_credits',         None)
     dd   = getattr(submission, 'declarant_details',   None)
     capital_gain = max(Decimal('0'), sum(
-        (_D(d.sales_proceed) - _D(d.cost)) for d in submission.disposals.all()
+        (_D(d.sales_proceed) - _D(d.cost)) for d in submission.disposals.all() if d.is_capital_gain
     ))
 
     S   = st['tbl_cell']

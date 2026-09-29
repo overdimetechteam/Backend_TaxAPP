@@ -55,17 +55,18 @@ def calculate_wht_credit_and_carry_forward(gross_tax, other_tax_credits, wht_tot
 
 def calculate_capital_gain_tax(disposals):
     """
-    Net capital gain = sum of (sales_proceed - cost) across all disposal-of-asset
-    entries for the year, excluding motor vehicle disposals (personal-use motor
-    vehicles are exempt from Capital Gains Tax). A net loss floors the taxable
-    gain at zero (no CGT refund for an overall loss). Flat 15% rate applied to
-    the net gain.
+    Net capital gain = sum of (sales_proceed - cost) across disposal entries
+    flagged is_capital_gain=True (added via the Income section's "Capital Gain"
+    table) only. Entries added via the Assets section's "Disposal of Assets"
+    table (section 10) are reporting-only and never taxed. A net loss floors
+    the taxable gain at zero (no CGT refund for an overall loss). Flat 15%
+    rate applied to the net gain.
 
     Returns (capital_gain, capital_gain_tax) — both Decimal, both >= 0.
     """
     net_gain = Decimal('0.00')
     for d in disposals:
-        if d.category == 'motor_vehicle':
+        if not d.is_capital_gain:
             continue
         net_gain += (d.sales_proceed or Decimal('0.00')) - (d.cost or Decimal('0.00'))
     capital_gain = max(Decimal('0.00'), net_gain)
@@ -292,7 +293,11 @@ def calculate_full_tax(submission) -> dict:
     remaining_relief = local_reliefs - local_relief_used
     taxable_foreign = max(Decimal('0.00'), foreign - remaining_relief)
 
-    net_taxable = taxable_local + taxable_foreign
+    # Capital gain is added back in here — it's excluded from the progressive
+    # slab computation below (calculate_mixed_tax only ever sees taxable_local/
+    # taxable_foreign), but the reported "Taxable Income" figure itself (cage
+    # 120) does include it.
+    net_taxable = taxable_local + taxable_foreign + capital_gain
 
     # ── 4. Tax Computation with slab breakdown ──────────────────────────────
     # Local income fills the progressive slabs first at normal rates; foreign

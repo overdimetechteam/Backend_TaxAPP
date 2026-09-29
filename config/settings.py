@@ -78,16 +78,15 @@ WSGI_APPLICATION = 'config.wsgi.application'
 
 DATABASE_URL = config('DATABASE_URL', default=None)
 
-DATABASES = {
-    "default": {
-        "ENGINE": "django.db.backends.mysql",
-        "NAME": "dprit_tax_application",
-        "USER": "dprit_admin",
-        "PASSWORD": "CkE##s4Ecp",
-        "HOST": "localhost",
-        "PORT": "3306",
+if DATABASE_URL:
+    DATABASES = {'default': dj_database_url.parse(DATABASE_URL, conn_max_age=600)}
+else:
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': BASE_DIR / 'db.sqlite3',
+        }
     }
-}
 
 AUTH_USER_MODEL = 'authentication.CustomUser'
 
@@ -185,11 +184,62 @@ ESMS_PASSWORD = 'Dpr@12345'
 # Optional; Sender ID/mask (max 11 chars) visible to the recipient. Left blank, the
 # account's default registered mask is used.
 ESMS_SENDER_ADDRESS = config('ESMS_SENDER_ADDRESS', default='')
+
+# Publicly reachable base URL for this backend (e.g. https://api.example.com), with
+# no trailing slash. Used to build the push_notification_url passed to eSMS so it can
+# call back with per-recipient delivery reports for bulk SMS campaigns. Left blank
+# (e.g. in local development, where this backend isn't publicly reachable), delivery
+# reports are simply not requested — bulk sends still work, just without per-recipient
+# delivery confirmation.
+PUBLIC_BASE_URL = config('PUBLIC_BASE_URL', default='')
 # Document Storage
 MAX_UPLOAD_SIZE = 10 * 1024 * 1024  # 10 MB
 ALLOWED_DOCUMENT_TYPES = ['application/pdf', 'image/jpeg', 'image/png', 'image/jpg']
 
 # Archive path
 ARCHIVE_ROOT = BASE_DIR / 'media' / 'archives'
+
+# Logging — notifications.log captures every SMS/email send attempt (eSMS API
+# calls, scheduled message delivery, the delivery-report webhook) with a
+# timestamp, so send outcomes can be checked after the fact instead of only
+# living in whatever terminal the server happened to be running in. Rotates
+# at 5 MB, keeping 5 backups, so it never grows unbounded.
+LOG_DIR = BASE_DIR / 'logs'
+LOG_DIR.mkdir(exist_ok=True)
+
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'verbose': {
+            'format': '{asctime} {levelname} {name} — {message}',
+            'style': '{',
+        },
+    },
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+            'formatter': 'verbose',
+        },
+        'notifications_file': {
+            'class': 'logging.handlers.RotatingFileHandler',
+            'filename': LOG_DIR / 'notifications.log',
+            'maxBytes': 5 * 1024 * 1024,  # 5 MB
+            'backupCount': 5,
+            'formatter': 'verbose',
+            'level': 'INFO',
+        },
+    },
+    'loggers': {
+        # Covers apps.notifications.sms_utils, .scheduled_messages, .signals,
+        # and the management commands — every logger created via
+        # logging.getLogger(__name__) under this package inherits this config.
+        'apps.notifications': {
+            'handlers': ['console', 'notifications_file'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+    },
+}
 
 

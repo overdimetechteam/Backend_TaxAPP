@@ -3,7 +3,7 @@ from django.dispatch import receiver
 
 from .models import Notification
 from .email_utils import send_notification_email
-from .sms_utils import send_sms
+from .sms_utils import send_sms, resolve_recipient_phone
 
 
 @receiver(post_save, sender=Notification)
@@ -11,21 +11,6 @@ def on_notification_created(sender, instance, created, **kwargs):
     if created:
         send_notification_email(instance)
         _send_notification_sms(instance)
-
-
-def _resolve_recipient_phone(user):
-    """
-    User.phone is a separate, optional field that's rarely filled in — the
-    number a client actually gives us lives on their ClientProfile (mobile /
-    telephone). Prefer User.phone (covers staff created with a phone number),
-    then fall back to the client's profile.
-    """
-    if user.phone:
-        return user.phone
-    profile = getattr(user, 'client_profile', None)
-    if profile:
-        return profile.mobile or profile.telephone or None
-    return None
 
 
 def _send_notification_sms(notification):
@@ -39,7 +24,7 @@ def _send_notification_sms(notification):
     in an API response.
     """
     recipient = notification.recipient
-    phone = _resolve_recipient_phone(recipient)
+    phone = resolve_recipient_phone(recipient)
     if not phone:
         notification._sms_result = None
         return None

@@ -66,6 +66,25 @@ class ScheduledMessage(models.Model):
         return f"Message #{self.id} by {self.created_by.email} ({self.status})"
 
 
+class ScheduledMessageCampaign(models.Model):
+    """
+    One row per eSMS campaign created for this message's bulk SMS send (normally
+    just one — chunking only happens if the recipient list exceeds eSMS's
+    per-campaign limit). Lets the delivery-report webhook look up which message
+    a given campaignId belongs to, so it can update the matching recipient's
+    sms_status when eSMS calls back with real per-number delivery results.
+    """
+    message = models.ForeignKey(ScheduledMessage, on_delete=models.CASCADE, related_name='campaigns')
+    campaign_id = models.CharField(max_length=32, unique=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'scheduled_message_campaigns'
+
+    def __str__(self):
+        return f"Campaign {self.campaign_id} for message #{self.message_id}"
+
+
 class ScheduledMessageRecipient(models.Model):
     CHANNEL_STATUS_CHOICES = [
         ('pending', 'Pending'),
