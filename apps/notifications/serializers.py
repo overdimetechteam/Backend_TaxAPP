@@ -43,9 +43,6 @@ class ScheduledMessageSerializer(serializers.ModelSerializer):
 
 
 class ScheduledMessageCreateSerializer(serializers.Serializer):
-    # Overall cap on a single bulk send.
-    MAX_RECIPIENTS = 300
-
     # A "Send Now" batch above this size is routed through the scheduled-message
     # cron pipeline (send_due_scheduled_messages, runs every 2 min) instead of
     # being sent inline: sending is synchronous inside the HTTP request, so a
@@ -57,10 +54,6 @@ class ScheduledMessageCreateSerializer(serializers.Serializer):
     client_ids = serializers.ListField(
         child=serializers.IntegerField(),
         allow_empty=False,
-        max_length=MAX_RECIPIENTS,
-        error_messages={
-            'max_length': f'You can send to at most {MAX_RECIPIENTS} clients at a time.',
-        },
     )
     send_email = serializers.BooleanField(default=False)
     send_sms = serializers.BooleanField(default=False)

@@ -53,17 +53,21 @@ class ScheduledMessageCreateSerializerTests(TestCase):
         self.assertFalse(s.is_valid())
         self.assertIn('client_ids', s.errors)
 
-    @patch('apps.notifications.scheduled_messages.send_sms')
-    def test_valid_data_with_no_schedule_sends_immediately(self, mock_send_sms):
-        mock_send_sms.return_value = True
+    @patch('apps.notifications.scheduled_messages.send_bulk_sms')
+    def test_valid_data_with_no_schedule_sends_immediately(self, mock_send_bulk_sms):
+        mock_send_bulk_sms.return_value = {
+            'success': True, 'sent_numbers': ['711234567'], 'skipped_numbers': [],
+            'campaign_ids': ['1'], 'comment': 'ok',
+        }
         s = self._serializer({'client_ids': [self.profile.id], 'send_sms': True, 'sms_body': 'Hi'})
         self.assertTrue(s.is_valid(), s.errors)
         message = s.save()
         self.assertEqual(message.status, 'sent')
-        mock_send_sms.assert_called_once()
+        # Single batched call, not one per recipient.
+        mock_send_bulk_sms.assert_called_once()
 
-    @patch('apps.notifications.scheduled_messages.send_sms')
-    def test_valid_data_with_future_schedule_stays_pending(self, mock_send_sms):
+    @patch('apps.notifications.scheduled_messages.send_bulk_sms')
+    def test_valid_data_with_future_schedule_stays_pending(self, mock_send_bulk_sms):
         from django.utils import timezone
         from datetime import timedelta
 
@@ -74,20 +78,14 @@ class ScheduledMessageCreateSerializerTests(TestCase):
         self.assertTrue(s.is_valid(), s.errors)
         message = s.save()
         self.assertEqual(message.status, 'pending')
-        mock_send_sms.assert_not_called()
+        mock_send_bulk_sms.assert_not_called()
 
-    def test_rejects_more_than_max_recipients(self):
+    def test_no_cap_on_recipient_count(self):
+        # There is no limit on how many clients a single bulk send can target —
+        # send_bulk_sms() chunks into eSMS campaigns of up to 1000 recipients
+        # each as needed, so an arbitrarily large client_ids list is valid.
         s = self._serializer({
-            'client_ids': list(range(1, 302)), 'send_sms': True, 'sms_body': 'Hi',
-        })
-        self.assertFalse(s.is_valid())
-        self.assertIn('client_ids', s.errors)
-        self.assertIn('at most 300 clients', str(s.errors['client_ids'][0]))
-
-    def test_accepts_exactly_max_recipients(self):
-        # The cap itself must not be off by one; only the ids we own become recipients.
-        s = self._serializer({
-            'client_ids': [self.profile.id] + list(range(10000, 10299)),
+            'client_ids': [self.profile.id] + list(range(10000, 11999)),
             'send_sms': True, 'sms_body': 'Hi',
             'scheduled_for': timezone.now() + timedelta(days=1),
         })
@@ -144,8 +142,8 @@ class ScheduledMessageCreateSerializerTests(TestCase):
             ))
         return profiles
 
-    @patch('apps.notifications.scheduled_messages.send_sms')
-    def test_send_now_above_sync_threshold_is_auto_queued_not_sent_inline(self, mock_send_sms):
+    @patch('apps.notifications.scheduled_messages.send_bulk_sms')
+    def test_send_now_above_sync_threshold_is_auto_queued_not_sent_inline(self, mock_send_bulk_sms):
         profiles = self._create_client_profiles(
             ScheduledMessageCreateSerializer.SYNC_SEND_THRESHOLD + 1
         )
@@ -156,19 +154,23 @@ class ScheduledMessageCreateSerializerTests(TestCase):
         message = s.save()
         self.assertEqual(message.status, 'pending')
         self.assertIsNotNone(message.scheduled_for)
-        mock_send_sms.assert_not_called()
+        mock_send_bulk_sms.assert_not_called()
 
-    @patch('apps.notifications.scheduled_messages.send_sms')
-    def test_send_now_at_sync_threshold_still_sends_immediately(self, mock_send_sms):
-        mock_send_sms.return_value = True
+    @patch('apps.notifications.scheduled_messages.send_bulk_sms')
+    def test_send_now_at_sync_threshold_still_sends_immediately(self, mock_send_bulk_sms):
         profiles = self._create_client_profiles(ScheduledMessageCreateSerializer.SYNC_SEND_THRESHOLD)
+        mock_send_bulk_sms.return_value = {
+            'success': True, 'sent_numbers': ['711234567'], 'skipped_numbers': [],
+            'campaign_ids': ['2'], 'comment': 'ok',
+        }
         s = self._serializer({
             'client_ids': [p.id for p in profiles], 'send_sms': True, 'sms_body': 'Hi',
         })
         self.assertTrue(s.is_valid(), s.errors)
         message = s.save()
         self.assertEqual(message.status, 'sent')
-        self.assertEqual(mock_send_sms.call_count, len(profiles))
+        # The whole point of batching: however many recipients, still 1 API call.
+        mock_send_bulk_sms.assert_called_once()
 
     def test_unselected_channel_status_is_not_applicable(self):
         s = self._serializer({

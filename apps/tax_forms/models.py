@@ -437,6 +437,10 @@ class DisposalOfAsset(models.Model):
     date_acquired = models.DateField(null=True, blank=True)
     cost = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0.00'))
     order = models.IntegerField(default=1)
+    # True only for entries added via the Income section's "Capital Gain" table.
+    # Entries added via the Assets section's "Disposal of Assets" table (section 10)
+    # are reporting-only and never taxed as a capital gain.
+    is_capital_gain = models.BooleanField(default=False)
 
     class Meta:
         db_table = 'disposal_of_assets'
